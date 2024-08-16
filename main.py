@@ -4,6 +4,26 @@ import sys
 from typing import List, Tuple
 
 
+MIN_DIFFICULTY = 1
+MAX_DIFFICULTY = 60
+
+
+class ANSIEscapeSequences:
+    """
+    Storing ANSI escape sequences here for convenience
+    """
+
+    RESET = "\x1b[0m"
+    BACKGROUND_GREEN = "\x1b[48;5;22m"
+    BACKGROUND_RED = "\x1b[48;5;196m"
+    BACKGROUND_BLUE = "\x1b[48;5;18m"
+    BACKGROUND_WHITE = "\x1b[48;5;253m"
+    FOREGROUND_YELLOW = "\x1b[38;5;226m"
+    FOREGROUND_BLUE = "\x1b[38;5;36m"
+    FOREGROUND_WHITE = "\x1b[38;5;253m"
+    ITALIC = "\x1b[3m"
+
+
 def can_place(board, row, col, num: int):
     """Checks if placing num at board[row][col] is valid."""
     for i in range(9):
@@ -32,27 +52,29 @@ def solve_sudoku(board):
     return True
 
 
-def get_board_display(board, current_cell: Tuple[int, int]):
+def get_board_display(board, current_cell: Tuple[int, int] | None = None):
     """
     From the board state, create a string that formats everything nicely
 
-    current_cell: The cell the user is currently guessing for
+    current_cell: The cell the user is currently guessing for, if none, no highlighting will be done
     """
     R, C = len(board), len(board[0])
-    board_str = " _________________________\n"
+    board_str = f"{ANSIEscapeSequences.RESET} _________________________\n"
 
     for i in range(R):
-        row_str = ""
+        row_str = f"{ANSIEscapeSequences.RESET}"
+
         if i > 0 and i % 3 == 0:
-            board_str += " -------------------------\n"
+
+            board_str += f" -------------------------\n"
 
         for j in range(C):
             if j % 3 == 0:
                 row_str += f" |"
-            if i == current_cell[0] and j == current_cell[1]:
-                row_str += f"{ANSIEscapeSequences.TEXT_RED_BOLD}"
-                row_str += " _"
-                row_str += f"{ANSIEscapeSequences.TEXT_BASE}"
+            if current_cell and i == current_cell[0] and j == current_cell[1]:
+                row_str += f" {ANSIEscapeSequences.BACKGROUND_WHITE}{ANSIEscapeSequences.FOREGROUND_BLUE}"
+                row_str += "_"
+                row_str += f"{ANSIEscapeSequences.RESET}"
             else:
                 row_str += f" {board[i][j]}"
         row_str += " | \n"
@@ -69,10 +91,6 @@ class SudokuBoardArguments:
 
     # The higher the difficulty, the more cells we will remove from the generated board
     difficulty: int
-
-
-MIN_DIFFICULTY = 10
-MAX_DIFFICULTY = 60
 
 
 def validate_sudoku_args(args: SudokuBoardArguments):
@@ -170,15 +188,6 @@ def generate_sudoku(args: SudokuBoardArguments):
     return board
 
 
-class ANSIEscapeSequences:
-    """
-    Storing ANSI escape sequences here for convenience
-    """
-
-    TEXT_RED_BOLD = "\x1b[1;31m"
-    TEXT_BASE = "\x1b[0m"
-
-
 def swap_to_ansi(sequence: ANSIEscapeSequences):
     sys.stdout.write(sequence)
 
@@ -273,13 +282,14 @@ def generate_hint(number: int) -> str:
     equation = f"{a if a > 1 else ''}x {op} {abs(b)} = {c}"
 
     # Construct the hint text
-    hint_text = f"HINT - Solve for x: {equation}"
+    hint_text = f"{ANSIEscapeSequences.ITALIC}{ANSIEscapeSequences.FOREGROUND_BLUE}HINT{ANSIEscapeSequences.RESET} - Solve for x: {equation}"
 
     return hint_text
 
 
 def play_game(args: SudokuBoardArguments):
     board = generate_sudoku(args)
+    guess_count = 0
 
     randomize_board(board)
 
@@ -290,12 +300,21 @@ def play_game(args: SudokuBoardArguments):
                 board[i][j] = "_"
                 candidate = None
 
+                header_component = TextUIComponent(
+                    f"{ANSIEscapeSequences.BACKGROUND_BLUE}{ANSIEscapeSequences.FOREGROUND_YELLOW}---=== SUPER SUDOKU ===---{ANSIEscapeSequences.RESET}\n"
+                )
+                signature_component = TextUIComponent(
+                    f"     {ANSIEscapeSequences.ITALIC}by Dominic Nidy{ANSIEscapeSequences.RESET}\n"
+                )
                 board_component = TextUIComponent(get_board_display(board, (i, j)), 0)
                 dialog_component = TextUIComponent(
-                    f"What number should we place at {i}, {j} ?: ", 100
+                    f"What number should we place at {i}, {j} ?: ",
+                    100,
                 )
 
                 while not candidate:
+                    UIBuffer.add(header_component)
+                    UIBuffer.add(signature_component)
                     UIBuffer.add(board_component)
                     UIBuffer.add(dialog_component)
                     UIBuffer.draw()
@@ -306,13 +325,24 @@ def play_game(args: SudokuBoardArguments):
                     except ValueError:
                         # * this is a hack, manually incrementing the _newline_count to prevent incorrect inputs from
                         # * desync-ing the linecounts in our UIBuffer
-                        UIBuffer._previous_lines += 1
+                        UIBuffer.add(
+                            TextUIComponent(
+                                f"{ANSIEscapeSequences.BACKGROUND_RED}Invalid input{ANSIEscapeSequences.RESET} ",
+                                5,
+                            )
+                        )
                         continue
                     if _candidate <= 0 or _candidate >= 10:
-                        UIBuffer.add(TextUIComponent("Invalid input", 5))
+                        UIBuffer.add(
+                            TextUIComponent(
+                                f"{ANSIEscapeSequences.BACKGROUND_RED}Invalid input{ANSIEscapeSequences.RESET} ",
+                                5,
+                            )
+                        )
                         continue
                     else:
                         candidate = _candidate
+                        guess_count += 1
 
                 if can_place(board, i, j, candidate):
                     board[i][j] = str(candidate)
@@ -324,16 +354,86 @@ def play_game(args: SudokuBoardArguments):
                             hint_component = TextUIComponent(
                                 f"{generate_hint(num)}\n", 2
                             )
+                            UIBuffer.add(
+                                TextUIComponent(
+                                    f"{ANSIEscapeSequences.BACKGROUND_RED}WRONG{ANSIEscapeSequences.RESET} ",
+                                    5,
+                                )
+                            )
                             UIBuffer.add(hint_component)
                             is_solvable = True
                             break
                     if not is_solvable:
-                        print("You lost!")
-                        exit()
+                        print(
+                            f"\n{ANSIEscapeSequences.BACKGROUND_RED}You lost!{ANSIEscapeSequences.RESET}"
+                        )
+                        print(
+                            f"{ANSIEscapeSequences.ITALIC}Why? One of your moves made the board unsolvable. In {ANSIEscapeSequences.BACKGROUND_BLUE}{ANSIEscapeSequences.FOREGROUND_YELLOW}SUPER SUDOKU{ANSIEscapeSequences.RESET}, you\n{ANSIEscapeSequences.ITALIC}cannot undo previous moves."
+                        )
+                        input("Press enter to continue...")
+                        return 0
 
-    print("\x1b[2J")  # Clear the screen
-    print(get_board_display(board, (i, j)), end="")
-    print("\nYou won!")
+    UIBuffer.add(header_component)
+    UIBuffer.add(
+        TextUIComponent(
+            (
+                f"\n{ANSIEscapeSequences.RESET}{ANSIEscapeSequences.BACKGROUND_GREEN}{ANSIEscapeSequences.FOREGROUND_WHITE}You won!{ANSIEscapeSequences.RESET}",
+                2,
+            )
+        )
+    )
+    UIBuffer.draw()
+    input("Press enter to continue...")
 
 
-play_game(SudokuBoardArguments(15))
+def display_menu() -> SudokuBoardArguments:
+    header_component = TextUIComponent(
+        f"{ANSIEscapeSequences.BACKGROUND_BLUE}{ANSIEscapeSequences.FOREGROUND_YELLOW}---=== SUPER SUDOKU ===---{ANSIEscapeSequences.RESET}\n",
+        0,
+    )
+    signature_component = TextUIComponent(
+        f"     {ANSIEscapeSequences.ITALIC}by Dominic Nidy{ANSIEscapeSequences.RESET}\n",
+        1,
+    )
+    options_dialog_component = TextUIComponent(
+        f"\n\nSelect difficulty level ({MIN_DIFFICULTY}-{MAX_DIFFICULTY}): ", 100
+    )
+
+    sudoku_options = None
+    while not sudoku_options:
+        UIBuffer.add(header_component)
+        UIBuffer.add(signature_component)
+        UIBuffer.add(options_dialog_component)
+        UIBuffer.draw()
+
+        try:
+            _difficulty = int(input())
+
+            if _difficulty < MIN_DIFFICULTY or _difficulty > MAX_DIFFICULTY:
+                UIBuffer.add(
+                    TextUIComponent(
+                        f"{ANSIEscapeSequences.BACKGROUND_RED}Invalid input{ANSIEscapeSequences.RESET} ",
+                        5,
+                    )
+                )
+                continue
+            else:
+                sudoku_options = SudokuBoardArguments(_difficulty)
+        except KeyboardInterrupt:
+            exit()
+        except ValueError:
+            # * this is a hack, manually incrementing the _newline_count to prevent incorrect inputs from
+            # * desync-ing the linecounts in our UIBuffer
+            UIBuffer.add(
+                TextUIComponent(
+                    f"{ANSIEscapeSequences.BACKGROUND_RED}Invalid input{ANSIEscapeSequences.RESET} ",
+                    5,
+                )
+            )
+    return sudoku_options
+
+
+if __name__ == "__main__":
+    while 1:
+        sudoku_options = display_menu()
+        play_game(sudoku_options)
