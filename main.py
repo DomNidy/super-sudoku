@@ -2,6 +2,7 @@ from dataclasses import dataclass
 import random
 import sys
 from typing import List, Tuple
+from math import log2
 
 
 MIN_DIFFICULTY = 1
@@ -20,7 +21,9 @@ class ANSIEscapeSequences:
     BACKGROUND_WHITE = "\x1b[48;5;253m"
     FOREGROUND_YELLOW = "\x1b[38;5;226m"
     FOREGROUND_BLUE = "\x1b[38;5;36m"
+    FOREGROUND_DARKBLUE = "\x1b[38;5;17m"
     FOREGROUND_WHITE = "\x1b[38;5;253m"
+    FOREGROUND_WHITER = "\x1b[38;5;255m"
     ITALIC = "\x1b[3m"
 
 
@@ -188,9 +191,6 @@ def generate_sudoku(args: SudokuBoardArguments):
     return board
 
 
-def swap_to_ansi(sequence: ANSIEscapeSequences):
-    sys.stdout.write(sequence)
-
 
 class TextUIComponent:
     def __init__(self, text: str, y_index: int = 0, x_index: int = 0):
@@ -287,7 +287,7 @@ def generate_hint(number: int) -> str:
     return hint_text
 
 
-def play_game(args: SudokuBoardArguments):
+def play_game(ctx: "SudokuContext", args: SudokuBoardArguments):
     board = generate_sudoku(args)
     guess_count = 0
 
@@ -371,22 +371,61 @@ def play_game(args: SudokuBoardArguments):
                             f"{ANSIEscapeSequences.ITALIC}Why? One of your moves made the board unsolvable. In {ANSIEscapeSequences.BACKGROUND_BLUE}{ANSIEscapeSequences.FOREGROUND_YELLOW}SUPER SUDOKU{ANSIEscapeSequences.RESET}, you\n{ANSIEscapeSequences.ITALIC}cannot undo previous moves."
                         )
                         input("Press enter to continue...")
-                        return 0
+                        return -1
+
+    score = SudokuScore(guess_count, args.difficulty)
+    ctx.add_score(score)
 
     UIBuffer.add(header_component)
+    UIBuffer.add(TextUIComponent(get_board_display(board)))
     UIBuffer.add(
         TextUIComponent(
-            (
-                f"\n{ANSIEscapeSequences.RESET}{ANSIEscapeSequences.BACKGROUND_GREEN}{ANSIEscapeSequences.FOREGROUND_WHITE}You won!{ANSIEscapeSequences.RESET}",
-                2,
-            )
+            f"\n{ANSIEscapeSequences.RESET}{ANSIEscapeSequences.BACKGROUND_GREEN}{ANSIEscapeSequences.FOREGROUND_WHITE}You won!\n{ANSIEscapeSequences.RESET}",
+            2,
+        )
+    )
+    UIBuffer.add(
+        TextUIComponent(
+            f"\nSCORE: {score}\n",
+            2,
         )
     )
     UIBuffer.draw()
     input("Press enter to continue...")
 
 
-def display_menu() -> SudokuBoardArguments:
+class SudokuScore:
+    def __init__(self, guess_count: int, difficulty: int):
+        assert difficulty != 0, "An error occured, invalid difficulty of 0"
+        self.guess_count = guess_count
+        self.difficulty = difficulty
+
+        self.score = difficulty**2 * (81 - min(80, guess_count)) / max(1, difficulty)
+        self.score /= 15
+        self.score = int(self.score)
+
+    def __lt__(self, other: "SudokuScore"):
+        return self.score >= other.score
+
+    def __str__(self) -> str:
+        return f"{ANSIEscapeSequences.FOREGROUND_WHITER}{self.score}{ANSIEscapeSequences.RESET} {ANSIEscapeSequences.ITALIC}(with {self.guess_count} guess(es) and difficulty of {self.difficulty}){ANSIEscapeSequences.RESET}"
+
+
+class SudokuContext:
+    def __init__(self) -> None:
+        self.scores: List[SudokuScore] = []
+
+    def add_score(self, score: SudokuScore):
+        assert isinstance(
+            score, SudokuScore
+        ), "Runtime error occured, this is likely a bug. Sorry :P"
+        self.scores.append(score)
+
+    def has_scores(self) -> bool:
+        return len(self.scores) > 0
+
+
+def display_menu(ctx: SudokuContext) -> SudokuBoardArguments:
     header_component = TextUIComponent(
         f"{ANSIEscapeSequences.BACKGROUND_BLUE}{ANSIEscapeSequences.FOREGROUND_YELLOW}---=== SUPER SUDOKU ===---{ANSIEscapeSequences.RESET}\n",
         0,
@@ -404,6 +443,24 @@ def display_menu() -> SudokuBoardArguments:
         UIBuffer.add(header_component)
         UIBuffer.add(signature_component)
         UIBuffer.add(options_dialog_component)
+        if ctx.has_scores():
+            ctx.scores.sort()
+            scores = "\n".join(
+                [f" {i+1}. {ctx.scores[i]}" for i in range(len(ctx.scores))]
+            )
+            UIBuffer.add(
+                TextUIComponent(
+                    f"\n{ANSIEscapeSequences.BACKGROUND_WHITE}{ANSIEscapeSequences.FOREGROUND_DARKBLUE}Scores:{ANSIEscapeSequences.RESET}\n{scores}\n",
+                    2,
+                )
+            )
+        else:
+            UIBuffer.add(
+                TextUIComponent(
+                    f"\n{ANSIEscapeSequences.ITALIC}Play some games to see your scores!{ANSIEscapeSequences.RESET}\n",
+                    2,
+                )
+            )
         UIBuffer.draw()
 
         try:
@@ -426,7 +483,7 @@ def display_menu() -> SudokuBoardArguments:
             # * desync-ing the linecounts in our UIBuffer
             UIBuffer.add(
                 TextUIComponent(
-                    f"{ANSIEscapeSequences.BACKGROUND_RED}Invalid input{ANSIEscapeSequences.RESET} ",
+                    f"\n{ANSIEscapeSequences.BACKGROUND_RED}Invalid input{ANSIEscapeSequences.RESET} ",
                     5,
                 )
             )
@@ -434,6 +491,9 @@ def display_menu() -> SudokuBoardArguments:
 
 
 if __name__ == "__main__":
+    # Context object used to store state, things like scores
+    ctx = SudokuContext()
+ 
     while 1:
-        sudoku_options = display_menu()
-        play_game(sudoku_options)
+        sudoku_options = display_menu(ctx)
+        play_game(ctx, sudoku_options)
